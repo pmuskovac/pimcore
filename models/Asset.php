@@ -308,7 +308,7 @@ class Asset extends Element\AbstractElement
                     } else {
                         // write a tmp file because the stream isn't a pointer to the local filesystem
                         rewind($data['stream']);
-                        $dest = fopen($tmpFile, 'w+', false, File::getContext());
+                        $dest = fopen($tmpFile, 'w', false, File::getContext());
                         stream_copy_to_stream($data['stream'], $dest);
                         fclose($dest);
                     }
@@ -1439,7 +1439,7 @@ class Asset extends Element\AbstractElement
         }
 
         $src = $this->getStream();
-        $dest = fopen($destinationPath, 'w+', false, File::getContext());
+        $dest = fopen($destinationPath, 'w', false, File::getContext());
         stream_copy_to_stream($src, $dest);
         fclose($dest);
 
