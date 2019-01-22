@@ -49,6 +49,8 @@ class Imagick extends Adapter
      */
     public function load($imagePath, $options = [])
     {
+        $hasLocalTempfile = false;
+
         if (isset($options['preserveColor'])) {
             // set this option to TRUE to skip all color transformations during the loading process
             // this can massively improve performance if the color information doesn't matter, ...
@@ -65,6 +67,12 @@ class Imagick extends Adapter
 
             File::put($tmpFilePath, \Pimcore\Tool::getHttpData($imagePath));
             $imagePath = $tmpFilePath;
+        }
+        // S3
+        if (preg_match('@^s3://@', $imagePath)) {
+
+            $imagePath        = $this->fetchS3Image($imagePath);
+            $hasLocalTempfile = true;
         }
 
         if (!stream_is_local($imagePath) && isset($options['asset'])) {
@@ -117,6 +125,9 @@ class Imagick extends Adapter
             $imagePathLoad = $imagePathLoad . '[0]';
 
             if (!$i->readImage($imagePathLoad) || !filesize($imagePath)) {
+                if ($hasLocalTempfile) {
+                    @unlink($imagePath);
+                }
                 return false;
             }
 
@@ -145,6 +156,10 @@ class Imagick extends Adapter
         } catch (\Exception $e) {
             Logger::error('Unable to load image: ' . $imagePath);
             Logger::error($e);
+
+            if ($hasLocalTempfile) {
+                @unlink($imagePath);
+            }
 
             return false;
         }
@@ -980,5 +995,51 @@ class Imagick extends Adapter
         }
 
         return $this->supportedFormatsCache[$format];
+    }
+
+    public function generateLowQualityPreview(string $path)
+    {
+        $hasLocalTempfile = false;
+        if (preg_match('@^s3://@', $path)) {
+            $path             = $this->fetchS3Image($path);
+            $hasLocalTempfile = true;
+        }
+
+        $imagick = new \Imagick($path);
+        $imagick->setImageFormat('jpg');
+        $imagick->setOption('jpeg:extent', '1kb');
+        $width = $imagick->getImageWidth();
+        $height = $imagick->getImageHeight();
+
+        // we can't use getImageBlob() here, because of a bug in combination with jpeg:extent
+        // http://www.imagemagick.org/discourse-server/viewtopic.php?f=3&t=24366
+        $tmpFile = PIMCORE_LOCAL_SYSTEM_TEMP_DIRECTORY . '/image-optimize-' . uniqid() . '.jpg';
+        $imagick->writeImage($tmpFile);
+        $image = file_get_contents($tmpFile);
+        $imagick->destroy();
+        unlink($tmpFile);
+        if ($hasLocalTempfile) {
+            unlink($path);
+        }
+
+        return $image;
+    }
+
+    private function fetchS3Image($imagePath): string
+    {
+        $tmpFilename = 'imagick_s3_auto_download_' . md5($imagePath) . '.' . File::getFileExtension($imagePath);
+        $tmpFilePath = PIMCORE_LOCAL_SYSTEM_TEMP_DIRECTORY . '/' . $tmpFilename;
+
+        $this->tmpFiles[] = $tmpFilePath;
+
+        $src = fopen($imagePath, 'r', false, File::getContext());
+        $dest = fopen($tmpFilePath, 'w', false, File::getContext());
+        stream_copy_to_stream($src, $dest);
+        fclose($dest);
+        fclose($src);
+
+        @chmod($destinationPath, File::getDefaultMode());
+
+        return $tmpFilePath;
     }
 }
